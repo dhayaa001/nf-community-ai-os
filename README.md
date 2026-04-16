@@ -10,29 +10,35 @@ code falls back to stub providers so the chat pipeline works locally). Phases
 2–5 are scaffolded as pluggable modules so they can be activated incrementally
 without rewrites.
 
+## Documentation
+
+- [`docs/architecture.md`](./docs/architecture.md) — module map, request lifecycle, WS event taxonomy, adapter matrix, extension points.
+- [`docs/deploy-staging.md`](./docs/deploy-staging.md) — step-by-step staging deploy on Supabase + Render + Vercel, including env matrix and smoke tests.
+- [`docs/tech-debt.md`](./docs/tech-debt.md) — canonical follow-up list from the Phase 1 stabilization pass (20 items, ranked).
+
 ---
 
-## System architecture
+## System architecture (summary)
 
 ```
 User → Web (Next.js) → API (NestJS) → Orchestrator → Queue (BullMQ | in-proc)
                                               ↓
                                        Agent Registry
                                               ↓
-                         ┌───────┬────────┬─────────┬──────────┐
-                         ↓       ↓        ↓         ↓          ↓
-                    Community  Lead    Sales    ProjectMgr   Builder …
-                         ↓       ↓        ↓
+                    Community · Lead · Sales · ProjectMgr · Builder · QA · BugFix · Growth
+                                              ↓
                             Repository (Supabase | memory)
-                         ↓       ↓        ↓
+                                              ↓
                     WebSocket (Socket.io) → Web (Chat + Dashboard)
 ```
 
 - **Orchestrator** — classifies intent, creates a `Task`, enqueues it. No agent is ever invoked directly from HTTP.
 - **Queue** — BullMQ when `REDIS_URL` is set, in-process `setImmediate` executor otherwise.
-- **Agents** — each one a single class implementing `Agent { kind; run(ctx) }`. Registry dispatches by `AgentKind`.
+- **Agents** — each one a class implementing `Agent { kind; run(ctx) }`. Registry dispatches by `AgentKind`.
 - **Repository** — `SupabaseRepository` when creds are set; `MemoryRepository` for dev/CI.
-- **Events** — Socket.io broadcasts `task:*`, `message:appended`, `lead:captured`, `agent:stats_updated` to the UI and to the admin dashboard.
+- **Events** — Socket.io broadcasts `task:*`, `message:appended`, `lead:captured`, `agent:stats_updated` to the chat UI and to the admin dashboard.
+
+Full diagrams, request lifecycle, and extension points: [`docs/architecture.md`](./docs/architecture.md).
 
 ---
 
