@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "paths": {
+      "@nf/shared": ["../shared/src"]
+    }
+  },
+  "include": ["src/**/*"]
+}
