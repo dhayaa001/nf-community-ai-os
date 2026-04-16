@@ -4,11 +4,8 @@
     "module": "commonjs",
     "moduleResolution": "node",
     "outDir": "./dist",
+    "rootDir": "./src",
     "baseUrl": "./",
-    "paths": {
-      "@nf/shared": ["../../packages/shared/src"],
-      "@nf/db": ["../../packages/db/src"]
-    },
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "declaration": false,
@@ -22,5 +19,5 @@
     "noFallthroughCasesInSwitch": true,
     "types": ["node"]
   },
-  "include": ["src/**/*", "../../packages/shared/src/**/*", "../../packages/db/src/**/*"]
+  "include": ["src/**/*"]
 }
