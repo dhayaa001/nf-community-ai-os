@@ -16,6 +16,9 @@ export class CommunityAgent implements Agent {
   constructor(private readonly llm: LlmService) {}
 
   async run(ctx: AgentContext): Promise<AgentResult> {
+    // ctx.history already contains the latest user message (the orchestrator
+    // persists it before dispatching). Don't append ctx.latestUserMessage
+    // again or the LLM sees the turn twice.
     const historyMessages: LlmMessage[] = ctx.history.slice(-10).map((m) => ({
       role: m.role === 'assistant' ? 'assistant' : 'user',
       content: m.content,
@@ -24,7 +27,6 @@ export class CommunityAgent implements Agent {
       messages: [
         { role: 'system', content: `community manager\n${SYSTEM_PROMPT}` },
         ...historyMessages,
-        { role: 'user', content: ctx.latestUserMessage },
       ],
       temperature: 0.6,
       maxTokens: 300,

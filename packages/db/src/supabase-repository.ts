@@ -211,24 +211,27 @@ export class SupabaseRepository implements Repository {
     return (data ?? []).map(rowToAgent);
   }
 
+  /**
+   * Atomic increment via Postgres function (see migration 0002). This avoids
+   * the read-modify-write race that the naive JS implementation would expose
+   * when two conversations hit the same agent concurrently.
+   */
   async incrementAgentStats(
     kind: AgentKind,
     patch: { success: boolean; score: number; revenue?: number },
   ) {
-    const current = await this.getAgent(kind);
-    if (!current) throw new Error(`Agent ${kind} not registered`);
-    const nextCompleted = current.tasksCompleted + 1;
-    const successRate =
-      (current.successRate * current.tasksCompleted + (patch.success ? 1 : 0)) / nextCompleted;
-    const avgScore =
-      (current.avgScore * current.tasksCompleted + patch.score) / nextCompleted;
-    return this.upsertAgent({
-      ...current,
-      tasksCompleted: nextCompleted,
-      successRate: Number(successRate.toFixed(4)),
-      avgScore: Number(avgScore.toFixed(4)),
-      revenueGenerated: current.revenueGenerated + (patch.revenue ?? 0),
+    const { data, error } = await this.client.rpc('increment_agent_stats', {
+      p_kind: kind,
+      p_success: patch.success,
+      p_score: patch.score,
+      p_revenue: patch.revenue ?? 0,
     });
+    if (error) throw error;
+    if (!data) throw new Error(`Agent ${kind} not registered`);
+    // Supabase returns the updated row as a single object for `returns <table>`.
+    const row = (Array.isArray(data) ? data[0] : data) as Row | undefined;
+    if (!row) throw new Error(`Agent ${kind} not registered`);
+    return rowToAgent(row);
   }
 }
 

@@ -195,6 +195,30 @@ export class OrchestratorService implements OnModuleInit {
           success: primary.success && salesResult.success,
         };
       }
+
+      // Unqualified lead_capture (no service/budget/deadline/contact extracted)
+      // and the lead agent didn't emit a reply. Fall back to the community
+      // agent so the user always gets a conversational follow-up asking for
+      // the missing details. Without this, the user sees silence.
+      if (!primary.reply) {
+        const community = this.registry.get('community');
+        const fallback = await community.run(baseCtx);
+        if (fallback.reply) {
+          const fallbackMsg = await this.repo.db.appendMessage({
+            conversationId: baseCtx.conversationId,
+            role: 'assistant',
+            agentKind: 'community',
+            content: fallback.reply,
+          });
+          this.events.emitMessageAppended(baseCtx.conversationId, { message: fallbackMsg });
+        }
+        await this.updateAgentStats('community', fallback.score, fallback.success);
+        return {
+          output: { primary: primary.data ?? {}, fallback: fallback.data ?? {} },
+          score: (primary.score + fallback.score) / 2,
+          success: primary.success && fallback.success,
+        };
+      }
     }
 
     return { output: { primary: primary.data ?? {} }, score: primary.score, success: primary.success };

@@ -126,6 +126,13 @@ export class MemoryRepository implements Repository {
     return Array.from(this.agents.values());
   }
 
+  /**
+   * Read-modify-write. Safe here because the body contains no `await` — Node's
+   * single-threaded event loop cannot interleave another caller between the
+   * `get` and the `set`. If awaits are ever added inside, wrap this in a
+   * per-kind mutex (or better: migrate real usage to Supabase which has an
+   * atomic RPC — see `packages/db/migrations/0002_agent_stats_rpc.sql`).
+   */
   async incrementAgentStats(
     kind: AgentKind,
     patch: { success: boolean; score: number; revenue?: number },
