@@ -40,7 +40,7 @@ export class LeadAgent implements Agent {
     const hasSignal = Boolean(parsed.service || parsed.budget || parsed.deadline || parsed.contact);
 
     return {
-      data: parsed as unknown as Record<string, unknown>,
+      data: { ...parsed },
       score: hasSignal ? 0.85 : 0.3,
       success: hasSignal,
     };

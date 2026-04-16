@@ -25,7 +25,11 @@ import type {
  * receives every event for the dashboard.
  */
 @WebSocketGateway({
-  cors: { origin: process.env.API_CORS_ORIGIN?.split(',') ?? '*', credentials: true },
+  cors: {
+    origin:
+      process.env.API_CORS_ORIGIN?.split(',').map((s) => s.trim()).filter(Boolean) ?? '*',
+    credentials: true,
+  },
 })
 export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer() server!: Server;

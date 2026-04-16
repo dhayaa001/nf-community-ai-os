@@ -46,7 +46,8 @@ export function ChatPanel() {
   };
   useSocket(handlers, [conversationId]);
 
-  // Re-join room when conversation id changes AND back-fill via REST.
+  // Re-join room AND back-fill via REST whenever the conversation or the
+  // active task changes.
   //
   // The server dispatches the task on `setImmediate` right after enqueue, which
   // often fires before the browser receives the POST response, sets
@@ -56,6 +57,18 @@ export function ChatPanel() {
   // ~tens-of-ms work — guarantees the user still sees the assistant reply and
   // lead pill even if the socket missed its cue. It also makes the component
   // resilient to refresh / reconnect scenarios for free.
+  //
+  // The `currentTask?.id` dep matters: on a 2nd message in the *same*
+  // conversation the conversationId is unchanged, so without it this effect
+  // would not re-run and the "Agent working…" label would linger until the
+  // WS `message:appended` landed (and get stuck on a lost WS entirely).
+  //
+  // We also close over `currentTask.createdAt` to scope the "did the agent
+  // reply?" check to the *current* task — otherwise the back-fill would find
+  // a prior task's assistant reply in the same conversation and flip the
+  // status to 'idle' before the new task has actually finished running.
+  const currentTaskId = currentTask?.id ?? null;
+  const currentTaskCreatedAt = currentTask?.createdAt ?? null;
   useEffect(() => {
     if (!conversationId) return;
     const socket = getSocket();
@@ -79,8 +92,17 @@ export function ChatPanel() {
         const mineLatest = [...leads]
           .filter((l) => l.conversationId === conversationId)
           .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-        if (mineLatest) setLatestLead((prev) => prev ?? mineLatest);
-        if (msgs.some((m) => m.role === 'assistant')) {
+        if (mineLatest) {
+          setLatestLead((prev) =>
+            prev && prev.createdAt >= mineLatest.createdAt ? prev : mineLatest,
+          );
+        }
+        const hasReplyForCurrentTask = currentTaskCreatedAt
+          ? msgs.some(
+              (m) => m.role === 'assistant' && m.createdAt > currentTaskCreatedAt,
+            )
+          : msgs.some((m) => m.role === 'assistant');
+        if (hasReplyForCurrentTask) {
           setStatus((s) => (s === 'waiting' ? 'idle' : s));
         }
       } catch {
@@ -93,7 +115,7 @@ export function ChatPanel() {
       cancelled = true;
       for (const t of timers) clearTimeout(t);
     };
-  }, [conversationId]);
+  }, [conversationId, currentTaskId, currentTaskCreatedAt]);
 
   // Auto-scroll on new message
   useEffect(() => {
