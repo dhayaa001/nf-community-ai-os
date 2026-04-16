@@ -46,11 +46,53 @@ export function ChatPanel() {
   };
   useSocket(handlers, [conversationId]);
 
-  // Re-join room when conversation id changes
+  // Re-join room when conversation id changes AND back-fill via REST.
+  //
+  // The server dispatches the task on `setImmediate` right after enqueue, which
+  // often fires before the browser receives the POST response, sets
+  // `conversationId`, and has a chance to `emit('subscribe:conversation', …)`.
+  // Any WS events emitted during that window are dropped. Back-filling with a
+  // plain REST fetch — and retrying a few times to cover the stub pipeline's
+  // ~tens-of-ms work — guarantees the user still sees the assistant reply and
+  // lead pill even if the socket missed its cue. It also makes the component
+  // resilient to refresh / reconnect scenarios for free.
   useEffect(() => {
     if (!conversationId) return;
     const socket = getSocket();
     socket.emit('subscribe:conversation', conversationId);
+
+    let cancelled = false;
+    const backfill = async () => {
+      try {
+        const [msgs, leads] = await Promise.all([
+          api.listMessages(conversationId),
+          api.listLeads(),
+        ]);
+        if (cancelled) return;
+        setMessages((prev) => {
+          const map = new Map(prev.map((m) => [m.id, m] as const));
+          for (const m of msgs) map.set(m.id, m);
+          return Array.from(map.values()).sort((a, b) =>
+            a.createdAt.localeCompare(b.createdAt),
+          );
+        });
+        const mineLatest = [...leads]
+          .filter((l) => l.conversationId === conversationId)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+        if (mineLatest) setLatestLead((prev) => prev ?? mineLatest);
+        if (msgs.some((m) => m.role === 'assistant')) {
+          setStatus((s) => (s === 'waiting' ? 'idle' : s));
+        }
+      } catch {
+        /* swallow — WS is the primary channel, this is just a safety net */
+      }
+    };
+    void backfill();
+    const timers = [400, 1200, 2500, 5000].map((ms) => setTimeout(backfill, ms));
+    return () => {
+      cancelled = true;
+      for (const t of timers) clearTimeout(t);
+    };
   }, [conversationId]);
 
   // Auto-scroll on new message
