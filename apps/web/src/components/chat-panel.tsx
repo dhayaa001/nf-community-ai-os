@@ -62,7 +62,13 @@ export function ChatPanel() {
   // conversation the conversationId is unchanged, so without it this effect
   // would not re-run and the "Agent working…" label would linger until the
   // WS `message:appended` landed (and get stuck on a lost WS entirely).
+  //
+  // We also close over `currentTask.createdAt` to scope the "did the agent
+  // reply?" check to the *current* task — otherwise the back-fill would find
+  // a prior task's assistant reply in the same conversation and flip the
+  // status to 'idle' before the new task has actually finished running.
   const currentTaskId = currentTask?.id ?? null;
+  const currentTaskCreatedAt = currentTask?.createdAt ?? null;
   useEffect(() => {
     if (!conversationId) return;
     const socket = getSocket();
@@ -91,7 +97,12 @@ export function ChatPanel() {
             prev && prev.createdAt >= mineLatest.createdAt ? prev : mineLatest,
           );
         }
-        if (msgs.some((m) => m.role === 'assistant')) {
+        const hasReplyForCurrentTask = currentTaskCreatedAt
+          ? msgs.some(
+              (m) => m.role === 'assistant' && m.createdAt > currentTaskCreatedAt,
+            )
+          : msgs.some((m) => m.role === 'assistant');
+        if (hasReplyForCurrentTask) {
           setStatus((s) => (s === 'waiting' ? 'idle' : s));
         }
       } catch {
@@ -104,7 +115,7 @@ export function ChatPanel() {
       cancelled = true;
       for (const t of timers) clearTimeout(t);
     };
-  }, [conversationId, currentTaskId]);
+  }, [conversationId, currentTaskId, currentTaskCreatedAt]);
 
   // Auto-scroll on new message
   useEffect(() => {
