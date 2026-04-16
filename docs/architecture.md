@@ -147,21 +147,24 @@ All names live in [`packages/shared/src/events.ts`](../packages/shared/src/event
 as the `WS_EVENT` constant object — both emitter and listener import from
 there so the wire protocol cannot drift.
 
-| Event | Payload | Room |
+| Event | Payload | Rooms |
 |---|---|---|
-| `task:created` | `{ task: Task }` | `conv:{id}` |
-| `task:updated` | `{ taskId, status, agentKind }` | `conv:{id}` |
-| `task:completed` | `{ task: Task }` | `conv:{id}`, `admin` |
-| `message:appended` | `{ message: Message }` | `conv:{id}` |
-| `lead:captured` | `{ lead: Lead }` | `conv:{id}`, `admin` |
-| `agent:stats_updated` | `{ agentKind, tasksCompleted, successRate, avgScore }` | `admin` |
+| `task:created` | `{ task: Task }` | `conv:{id}` + `admin` |
+| `task:updated` | `{ taskId, status, agentKind }` | `conv:{id}` + `admin` |
+| `task:completed` | `{ task: Task }` | `conv:{id}` + `admin` |
+| `message:appended` | `{ message: Message }` | `conv:{id}` + `admin` |
+| `lead:captured` | `{ lead: Lead }` | `conv:{id}` + `admin` |
+| `agent:stats_updated` | `{ agentKind, tasksCompleted, successRate, avgScore }` | `admin` only |
 
 Rooms:
 - `conv:{id}` — one per conversation. The chat UI joins via
   `socket.emit('subscribe:conversation', id)` when it mounts or when the
   conversation id changes.
-- `admin` — the dashboard joins via `socket.emit('subscribe:admin')`. Only
-  events relevant to cross-conversation aggregates land here.
+- `admin` — the dashboard joins via `socket.emit('subscribe:admin')`.
+  `EventsGateway.emit()` always fans out to both the conversation room and
+  `admin` via `.to('conv:{id}').to('admin').emit(…)`, so the dashboard sees
+  every event. `agent:stats_updated` is the only event that skips the
+  conversation room and goes straight to `admin`.
 
 Race-safety note: the REST back-fill in [`chat-panel.tsx`](../apps/web/src/components/chat-panel.tsx)
 re-fetches messages and the latest lead after each `conversationId` or

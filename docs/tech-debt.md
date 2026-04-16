@@ -7,8 +7,8 @@ later phase or needs its own focused PR. Items are grouped by category and
 ranked within each group.
 
 > **Status**: nothing here is a blocker for Phase 1 running end-to-end in
-> dev mode. A few items (A1, A3, A4, D5) would block a real production
-> rollout; those are flagged inline.
+> dev mode. A few items (A3, A4, D15) would block a real production
+> rollout; those are flagged inline with 🔴.
 
 ---
 
