@@ -98,31 +98,33 @@ export class OrchestratorService implements OnModuleInit {
   private async processJob(job: OrchestratorJob) {
     // Idempotency guard — see `dispatching` field doc above (tech-debt A3).
     // Skip if another handler invocation for the same taskId is still in
-    // flight in this process.
+    // flight in this process. The `add` MUST happen synchronously right
+    // after the `has` check, before any `await`, or a second call can
+    // pass the check during the first call's suspension and both proceed.
     if (this.dispatching.has(job.taskId)) {
       this.logger.warn(`Task ${job.taskId} already dispatching; skipping duplicate job`);
       return;
     }
-
-    const task = await this.repo.db.getTask(job.taskId);
-    if (!task) {
-      this.logger.warn(`Task ${job.taskId} disappeared before processing`);
-      return;
-    }
-
-    // Short-circuit terminal states. BullMQ may redeliver a completed job's
-    // payload (e.g. retries configured, worker crash after completion) — if
-    // the task row already has a terminal status we must not re-run the
-    // agent, which would double-append messages and double-count stats.
-    if (task.status === 'completed' || task.status === 'failed') {
-      this.logger.warn(
-        `Task ${task.id} already ${task.status}; skipping re-dispatch (idempotent)`,
-      );
-      return;
-    }
-
     this.dispatching.add(job.taskId);
+
     try {
+      const task = await this.repo.db.getTask(job.taskId);
+      if (!task) {
+        this.logger.warn(`Task ${job.taskId} disappeared before processing`);
+        return;
+      }
+
+      // Short-circuit terminal states. BullMQ may redeliver a completed job's
+      // payload (e.g. retries configured, worker crash after completion) — if
+      // the task row already has a terminal status we must not re-run the
+      // agent, which would double-append messages and double-count stats.
+      if (task.status === 'completed' || task.status === 'failed') {
+        this.logger.warn(
+          `Task ${task.id} already ${task.status}; skipping re-dispatch (idempotent)`,
+        );
+        return;
+      }
+
       const running = await this.repo.db.updateTask(task.id, { status: 'running' });
       this.events.emitTaskUpdated(job.conversationId, {
         taskId: running.id,
