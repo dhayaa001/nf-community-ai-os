@@ -74,9 +74,17 @@ function lastMatch(s: string, re: RegExp): string | null {
 }
 
 export function extractMoney(s: string): string | null {
-  // Anchor the comma group on digit triples so we don't swallow a trailing
-  // list comma (`"$10,000, deadline..."` previously matched `$10,000,`).
-  return lastMatch(s, /\$\d{1,3}(?:,\d{3})*(?:\.\d+)?|\$\d+(?:\.\d+)?|\b\d+k\b/i);
+  // Three alternatives tried in order:
+  //   1. Comma-formatted ($10,000) — requires AT LEAST one `,\d{3}` group
+  //      (the `+` quantifier). If we used `*` here, `$1000` would match as
+  //      `$100` because `\d{1,3}` is greedy-maximal-of-3 and zero comma
+  //      groups would satisfy the rest — then the regex engine would stop
+  //      without ever trying alternative 2.
+  //   2. Plain digits ($1000, $5, $99.99).
+  //   3. Shorthand "Nk" (12k).
+  // The first alternative is anchored on digit triples so we don't swallow
+  // a trailing list comma (`"$10,000, deadline..."` → `$10,000`, not `$10,000,`).
+  return lastMatch(s, /\$\d{1,3}(?:,\d{3})+(?:\.\d+)?|\$\d+(?:\.\d+)?|\b\d+k\b/i);
 }
 
 export function extractEmail(s: string): string | null {

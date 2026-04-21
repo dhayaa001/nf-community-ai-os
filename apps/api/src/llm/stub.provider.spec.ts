@@ -25,6 +25,26 @@ describe('stub extractor helpers', () => {
     it('returns null when no money is mentioned', () => {
       expect(extractMoney('no numbers here')).toBeNull();
     });
+
+    // Regression for Devin Review finding on PR #8: a prior revision of
+    // the regex used `(?:,\d{3})*` (zero-or-more), which caused the
+    // comma-formatted alternative to succeed on `$1000` as just `$100`
+    // and stop before trying the plain-digit fallback. `+` (one-or-more)
+    // forces a real comma group before the first alternative fires.
+    it.each([
+      ['$1000', '$1000'],
+      ['$5000', '$5000'],
+      ['$10000', '$10000'],
+      ['$5', '$5'],
+      ['$99.99', '$99.99'],
+    ])('returns the full plain-digit amount for %s', (input, expected) => {
+      expect(extractMoney(input)).toBe(expected);
+    });
+
+    it('still matches comma-formatted amounts without swallowing trailing commas', () => {
+      expect(extractMoney('budget $10,000, deadline soon')).toBe('$10,000');
+      expect(extractMoney('paid $1,234,567.89 total')).toBe('$1,234,567.89');
+    });
   });
 
   describe('extractDeadline', () => {
