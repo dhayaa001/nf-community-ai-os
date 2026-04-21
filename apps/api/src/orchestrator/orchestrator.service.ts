@@ -25,6 +25,16 @@ import { IntentClassifier } from './intent-classifier';
 export class OrchestratorService implements OnModuleInit {
   private readonly logger = new Logger(OrchestratorService.name);
 
+  /**
+   * Per-process set of task IDs currently being dispatched. Prevents a
+   * second in-process call for the same task from running the agent twice —
+   * matters once BullMQ retries are enabled in Phase 2, because a retried
+   * job delivers the same `taskId` and we must not double-append messages
+   * or double-count agent stats. Paired with the `task.status` check in
+   * `processJob` for defense in depth. Tech-debt A3.
+   */
+  private readonly dispatching = new Set<string>();
+
   constructor(
     private readonly repo: RepositoryService,
     private readonly events: EventsGateway,
@@ -86,48 +96,72 @@ export class OrchestratorService implements OnModuleInit {
   // ---- Queue handler ------------------------------------------------------
 
   private async processJob(job: OrchestratorJob) {
+    // Idempotency guard — see `dispatching` field doc above (tech-debt A3).
+    // Skip if another handler invocation for the same taskId is still in
+    // flight in this process.
+    if (this.dispatching.has(job.taskId)) {
+      this.logger.warn(`Task ${job.taskId} already dispatching; skipping duplicate job`);
+      return;
+    }
+
     const task = await this.repo.db.getTask(job.taskId);
     if (!task) {
       this.logger.warn(`Task ${job.taskId} disappeared before processing`);
       return;
     }
 
-    const running = await this.repo.db.updateTask(task.id, { status: 'running' });
-    this.events.emitTaskUpdated(job.conversationId, {
-      taskId: running.id,
-      status: 'running',
-      agentKind: running.assignedAgent,
-    });
+    // Short-circuit terminal states. BullMQ may redeliver a completed job's
+    // payload (e.g. retries configured, worker crash after completion) — if
+    // the task row already has a terminal status we must not re-run the
+    // agent, which would double-append messages and double-count stats.
+    if (task.status === 'completed' || task.status === 'failed') {
+      this.logger.warn(
+        `Task ${task.id} already ${task.status}; skipping re-dispatch (idempotent)`,
+      );
+      return;
+    }
 
+    this.dispatching.add(job.taskId);
     try {
-      const history = await this.repo.db.listMessages(job.conversationId);
-      const latestUserMessage =
-        [...history].reverse().find((m) => m.role === 'user')?.content ??
-        (task.input as { message?: string }).message ?? '';
-
-      const result = await this.dispatch(task, {
-        conversationId: job.conversationId,
-        history,
-        latestUserMessage,
+      const running = await this.repo.db.updateTask(task.id, { status: 'running' });
+      this.events.emitTaskUpdated(job.conversationId, {
+        taskId: running.id,
+        status: 'running',
+        agentKind: running.assignedAgent,
       });
 
-      const completed = await this.repo.db.updateTask(task.id, {
-        status: 'completed',
-        output: result.output,
-        score: result.score,
-      });
+      try {
+        const history = await this.repo.db.listMessages(job.conversationId);
+        const latestUserMessage =
+          [...history].reverse().find((m) => m.role === 'user')?.content ??
+          (task.input as { message?: string }).message ?? '';
 
-      await this.updateAgentStats(task.assignedAgent, result.score, result.success);
+        const result = await this.dispatch(task, {
+          conversationId: job.conversationId,
+          history,
+          latestUserMessage,
+        });
 
-      this.events.emitTaskCompleted(job.conversationId, { task: completed });
-    } catch (err) {
-      this.logger.error(`Task ${task.id} failed: ${(err as Error).message}`);
-      const failed = await this.repo.db.updateTask(task.id, {
-        status: 'failed',
-        output: { error: (err as Error).message },
-        score: 0,
-      });
-      this.events.emitTaskCompleted(job.conversationId, { task: failed });
+        const completed = await this.repo.db.updateTask(task.id, {
+          status: 'completed',
+          output: result.output,
+          score: result.score,
+        });
+
+        await this.updateAgentStats(task.assignedAgent, result.score, result.success);
+
+        this.events.emitTaskCompleted(job.conversationId, { task: completed });
+      } catch (err) {
+        this.logger.error(`Task ${task.id} failed: ${(err as Error).message}`);
+        const failed = await this.repo.db.updateTask(task.id, {
+          status: 'failed',
+          output: { error: (err as Error).message },
+          score: 0,
+        });
+        this.events.emitTaskCompleted(job.conversationId, { task: failed });
+      }
+    } finally {
+      this.dispatching.delete(job.taskId);
     }
   }
 

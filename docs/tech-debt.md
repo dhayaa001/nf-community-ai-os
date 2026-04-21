@@ -8,7 +8,9 @@ ranked within each group.
 
 > **Status**: nothing here is a blocker for Phase 1 running end-to-end in
 > dev mode. A few items (A3, A4, D15) would block a real production
-> rollout; those are flagged inline with 🔴.
+> rollout; those are flagged inline with 🔴. **Update 2026-04-21**: the
+> three Phase 2 production blockers (A3, A4, D15) are now closed — see
+> strike-throughs below and the commit in `apps/api/src/{main,orchestrator,queue}`.
 
 ---
 
@@ -88,18 +90,22 @@ for zero-credential boots and demos.
    separate calls. If the second fails, the message is saved but the
    conversation stamp is stale. Fix with a Postgres function like the
    `increment_agent_stats` RPC in migration `0002_agent_stats_rpc.sql`.
-3. **`OrchestratorService.dispatch()` is not idempotent.** When Phase 2
-   lands real Redis, BullMQ will retry failed jobs and the orchestrator
-   will run the agent twice, double-appending messages and double-counting
-   stats. Fix by keying the early-exit on `taskId` and persisting a
-   `dispatched_at` timestamp on the task row — abort if already set.
-   🔴 Blocker for Phase 2 production.
-4. **`QueueService` in-memory mode silently runs in production.** If
-   `REDIS_URL` is unset and `NODE_ENV=production`, the API boots with the
-   `setImmediate` dispatcher and loses every in-flight task on SIGTERM.
-   Add a boot-time refusal: if `NODE_ENV=production` and `REDIS_URL` is
-   missing, log a fatal error and `process.exit(1)`.
-   🔴 Blocker for first production deploy.
+3. ~~**`OrchestratorService.dispatch()` is not idempotent.**~~ Closed
+   2026-04-21. `OrchestratorService.processJob` now guards on a
+   per-process `Set<taskId>` of in-flight dispatches **and** short-circuits
+   when the task row already has a terminal status (`completed` /
+   `failed`). A BullMQ redelivery of the same `taskId` will no longer
+   double-append messages or double-count stats. Full `dispatched_at`
+   column persistence is tracked separately — the in-process guard is
+   sufficient for single-worker Phase 2 deploys; add the column before
+   scaling to multiple API replicas.
+   🟢 Was blocker for Phase 2 production.
+4. ~~**`QueueService` in-memory mode silently runs in production.**~~
+   Closed 2026-04-21. `QueueService.registerHandler` now throws at boot
+   when `NODE_ENV=production` and `REDIS_URL` is unset. The bootstrap
+   catch in `main.ts` turns the throw into `process.exit(1)` with a
+   clear error message directing the operator to set `REDIS_URL`.
+   🟢 Was blocker for first production deploy.
 5. **No retry/backoff in `LlmService.complete()`.** OpenAI 5xx or
    rate-limit errors fall straight through to the fallback provider and
    then to the caller. Add bounded retry with jitter (3 attempts, 250ms
@@ -146,11 +152,12 @@ for zero-credential boots and demos.
     Nest's default is `log`, so these never appear in production without
     `LOG_LEVEL=debug`. Intentional for now; document the env var in the
     deploy guide (done in `docs/deploy-staging.md`).
-15. **No graceful shutdown hook on the API** beyond
-    `QueueService.onModuleDestroy`. Add `app.enableShutdownHooks()` to
-    `main.ts` before Phase 2's workers land — otherwise in-flight jobs
-    won't drain on SIGTERM.
-    🔴 Blocker for Phase 2 production.
+15. ~~**No graceful shutdown hook on the API.**~~ Closed 2026-04-21.
+    `main.ts` now calls `app.enableShutdownHooks()` before `app.listen`,
+    so SIGTERM / SIGINT fire Nest's `OnModuleDestroy` chain — including
+    `QueueService.onModuleDestroy` which closes the BullMQ worker, queue,
+    and ioredis connection in order.
+    🟢 Was blocker for Phase 2 production.
 16. **CORS origin is read from `process.env.API_CORS_ORIGIN` inside the
     gateway decorator**, which evaluates at import time. If the env is
     injected later (e.g. via a runtime secret loader) the gateway will
@@ -182,5 +189,6 @@ for zero-credential boots and demos.
 - For anything marked 🔴, gate merge on having a staging reproduction
   that shows the current behavior failing and the fix passing.
 
-Last updated: 2026-04-16 (Phase 2 kick-off). Item numbers are stable —
-don't renumber when items close, strike them through instead.
+Last updated: 2026-04-21 (Phase 2 blockers closed: A3, A4, D15). Item
+numbers are stable — don't renumber when items close, strike them
+through instead.

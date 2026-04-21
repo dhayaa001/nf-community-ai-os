@@ -15,6 +15,12 @@ async function bootstrap() {
   // Validation is done via zod schemas in controllers to keep dependencies light.
   app.setGlobalPrefix('api');
 
+  // Wire SIGTERM/SIGINT to Nest's lifecycle so providers that hold connections
+  // (QueueService → BullMQ worker + ioredis) can drain in-flight jobs before
+  // the process exits. Without this, SIGTERM on the host kills the process
+  // mid-dispatch and BullMQ marks those jobs stalled. Tech-debt D15.
+  app.enableShutdownHooks();
+
   const port = Number(process.env.API_PORT ?? 3001);
   await app.listen(port);
   Logger.log(`NF Community AI OS API listening on :${port}`, 'Bootstrap');

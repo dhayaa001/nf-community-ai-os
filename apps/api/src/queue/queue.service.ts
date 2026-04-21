@@ -33,7 +33,20 @@ export class QueueService implements OnModuleDestroy {
    */
   registerHandler(handler: Processor) {
     const redisUrl = this.config.get<string>('REDIS_URL');
+    const nodeEnv = this.config.get<string>('NODE_ENV');
     if (!redisUrl) {
+      // Refuse to boot in production without a real queue. The in-memory
+      // setImmediate dispatcher has no persistence, no retries, and loses
+      // in-flight work on SIGTERM — fine for dev, silently data-losing in
+      // prod. Tech-debt A4.
+      if (nodeEnv === 'production') {
+        throw new Error(
+          'REDIS_URL is required when NODE_ENV=production. ' +
+            'The in-memory queue has no durability and will lose in-flight tasks on restart. ' +
+            'Set REDIS_URL to a real Redis instance (Upstash, ElastiCache, Railway Redis, etc.) ' +
+            'or unset NODE_ENV to use the dev-only in-memory dispatcher.',
+        );
+      }
       this.inMemoryHandler = handler;
       this.logger.log('Queue mode=memory (REDIS_URL unset)');
       return;
