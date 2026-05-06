@@ -17,6 +17,19 @@ export interface AgentResult {
   score: number;
   /** Agent believes it successfully handled the task. */
   success: boolean;
+  /**
+   * Phase 3 — optional carry-over for the next pipeline step. Merged into
+   * the next agent's `ctx.extra`. Well-known keys today: `lead`. Typed
+   * union deferred to tech-debt B23.
+   */
+  handoff?: Record<string, unknown>;
+  /**
+   * Phase 3 — when true, the orchestrator stops the pipeline immediately
+   * after this step (without marking the task failed). Use when the agent
+   * decides downstream work is moot — e.g. lead extraction with no fields
+   * means running sales is pointless.
+   */
+  haltPipeline?: boolean;
 }
 
 export interface Agent {
