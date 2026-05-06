@@ -8,98 +8,72 @@ ranked within each group.
 
 > **Status**: nothing here is a blocker for Phase 1 running end-to-end in
 > dev mode. A few items (A3, A4, D15) would block a real production
-> rollout; those are flagged inline with 🔴.
+> rollout; those are flagged inline with 🔴. **Update 2026-04-21**: A1
+> (stub lead extractor) and the three Phase 2 production blockers (A3,
+> A4, D15) are now closed — see strike-throughs below.
 
 ---
 
-## ⚠️ Top of list: budget / deadline extraction in the stub LLM
+## ~~⚠️ Top of list: budget / deadline extraction in the stub LLM~~ — CLOSED
 
-**Item A1 — called out here because it is the single most visible user-facing
-bug when exercising the chat flow without real LLM keys.**
+**Item A1 — closed 2026-04-21.** Both proposed fixes shipped:
 
-### Symptom
+1. `apps/api/src/llm/stub.provider.ts` — `extractMoney`, `extractDeadline`,
+   and `extractKeyword` now return the *last* match in the haystack via a
+   shared `lastMatch(str, regex)` helper. Money regex was also tightened
+   so a trailing list comma (`"$10,000, deadline..."`) no longer gets
+   eaten.
+2. `apps/api/src/agents/lead.agent.ts` — `run()` now sends **only the
+   latest user turn** to the extractor; the previous full-transcript
+   prompt is gone.
+
+Covered by `apps/api/src/llm/stub.provider.spec.ts` (11 cases, first
+unit-test suite in the repo — partial progress on item C10). Verified
+scenario: user says "$5,000 in 6 weeks" on turn 1, "budget is now
+$10,000, deadline in 3 weeks" on turn 2 → extracted lead reflects the
+newest values.
+
+### What's next here
+
+With a real OpenAI / Anthropic key wired in, `LeadAgent` uses the real
+LLM path and the stub is bypassed entirely. The fixes above keep the
+stub honest for zero-credential demos and CI.
+
+### Original report (kept for history)
 
 Send two lead-capture messages in the same conversation with different
-budgets and deadlines. The "Lead captured" pill only ever shows the first
-message's budget and deadline, even though other fields (`Service`,
-`Contact`) update correctly. Verified in [PR #2's test run](https://github.com/dhayaa001/nf-community-ai-os/pull/2)
-— see the attached recording.
-
-### Root cause
-
-`apps/api/src/llm/stub.provider.ts` returns the first regex hit against the
-concatenated conversation history:
-
-```ts
-// stub.provider.ts — called once per LeadAgent.run()
-if (system.includes('lead extractor')) {
-  return JSON.stringify({
-    service: extractKeyword(lastUser, [...]) ?? null,
-    budget: extractMoney(lastUser),      // ← first $N or Nk match wins
-    deadline: extractDeadline(lastUser), // ← first "N weeks" match wins
-    contact: extractEmail(lastUser),
-    notes: lastUser.slice(0, 200),
-  });
-}
-```
-
-`lastUser` is the latest user message, so in principle this should work.
-But `LeadAgent` feeds the full conversation transcript as the prompt, and
-the stub's `messages.reverse().find(role === 'user')` picks up a single
-message — which one depends on how the agent formats the prompt. When the
-agent concatenates history into a single user message (as it does today),
-`lastUser` contains everything from turn 1 forward, and the regex matches
-the *first* occurrence.
-
-### Proposed fix
-
-Two independent changes would close this:
-
-1. **Stub extractor should prefer the newest keyword match**, not the
-   first. Scan the string in reverse, or split on `"\n"` and scan
-   latest-line-first.
-2. **`LeadAgent.run()` should send only the latest user turn** (plus a
-   system prompt) to the extractor, not the full transcript. The structured
-   output is meant to reflect the intent of the current message.
-
-Estimated effort: 1–2 hours including a regression test in `packages/db`
-or as a new `apps/api/test/` suite.
-
-### Why it wasn't fixed in stabilization
-
-The stabilization pass was explicitly "cleanup, no behavior changes". This
-is a behavior change in a code path (stub LLM) that only runs in dev/CI. A
-real OpenAI or Anthropic call side-steps the bug because the real model
-returns structured JSON scoped to the newest turn. Fixing the stub is
-orthogonal to the stabilization diff.
-
-### Workaround
-
-Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` in dev. The stub path is only
-for zero-credential boots and demos.
+budgets and deadlines — the "Lead captured" pill only ever showed the
+first message's values. Root cause: the stub returned the *first* regex
+hit, and `LeadAgent` passed the full transcript as one user message, so
+`lastUser` contained every budget ever mentioned and the first-match
+regex locked onto turn 1.
 
 ---
 
 ## A. Correctness / safety
 
-1. ~~Stub lead extractor regresses on 2nd turn~~ — **see section above**.
+1. ~~**Stub lead extractor regresses on 2nd turn.**~~ Closed 2026-04-21.
+   See section above for the shipped fix. Covered by
+   `apps/api/src/llm/stub.provider.spec.ts`.
 2. **`SupabaseRepository.appendMessage` is two non-transactional writes.**
    Inserting the message and bumping `conversations.updated_at` are
    separate calls. If the second fails, the message is saved but the
    conversation stamp is stale. Fix with a Postgres function like the
    `increment_agent_stats` RPC in migration `0002_agent_stats_rpc.sql`.
-3. **`OrchestratorService.dispatch()` is not idempotent.** When Phase 2
-   lands real Redis, BullMQ will retry failed jobs and the orchestrator
-   will run the agent twice, double-appending messages and double-counting
-   stats. Fix by keying the early-exit on `taskId` and persisting a
-   `dispatched_at` timestamp on the task row — abort if already set.
-   🔴 Blocker for Phase 2 production.
-4. **`QueueService` in-memory mode silently runs in production.** If
-   `REDIS_URL` is unset and `NODE_ENV=production`, the API boots with the
-   `setImmediate` dispatcher and loses every in-flight task on SIGTERM.
-   Add a boot-time refusal: if `NODE_ENV=production` and `REDIS_URL` is
-   missing, log a fatal error and `process.exit(1)`.
-   🔴 Blocker for first production deploy.
+3. ~~**`OrchestratorService.dispatch()` is not idempotent.**~~ Closed
+   2026-04-21 in [PR #7](https://github.com/dhayaa001/nf-community-ai-os/pull/7).
+   `OrchestratorService.processJob` now guards on a per-process
+   `Set<taskId>` of in-flight dispatches (added synchronously before any
+   `await` to avoid TOCTOU) and short-circuits when the task row is
+   already `completed` / `failed`. Full `dispatched_at` column deferred
+   until multi-replica scaling.
+   🟢 Was blocker for Phase 2 production.
+4. ~~**`QueueService` in-memory mode silently runs in production.**~~
+   Closed 2026-04-21 in [PR #7](https://github.com/dhayaa001/nf-community-ai-os/pull/7).
+   `QueueService.registerHandler` throws at boot when `NODE_ENV=production`
+   and `REDIS_URL` is unset; the bootstrap catch in `main.ts` turns the
+   throw into `process.exit(1)` with an operator-facing message.
+   🟢 Was blocker for first production deploy.
 5. **No retry/backoff in `LlmService.complete()`.** OpenAI 5xx or
    rate-limit errors fall straight through to the fallback provider and
    then to the caller. Add bounded retry with jitter (3 attempts, 250ms
@@ -126,10 +100,12 @@ for zero-credential boots and demos.
 
 ## C. Testing / tooling
 
-10. **Zero unit tests.** Phase 1 was explicitly UI + smoke tested. A
-    `LeadAgent.safeParse` / `IntentClassifier.heuristic` /
-    `MemoryRepository` suite would be ~30 minutes and pays back every
-    subsequent PR.
+10. **Zero unit tests** — *partial progress 2026-04-21*. `apps/api` now
+    uses vitest; `stub.provider.spec.ts` covers the extractor helpers
+    and the lead-extractor JSON path. Next candidates:
+    `LeadAgent.safeParse`, `IntentClassifier.heuristic`,
+    `MemoryRepository`, and the `OrchestratorService` idempotency guard
+    from A3.
 11. **No CI workflow.** Repo has no `.github/workflows/` so `git_pr_checks`
     has nothing to wait on. Add one that runs `pnpm -r build`, `pnpm lint`,
     `pnpm typecheck`.
@@ -146,11 +122,13 @@ for zero-credential boots and demos.
     Nest's default is `log`, so these never appear in production without
     `LOG_LEVEL=debug`. Intentional for now; document the env var in the
     deploy guide (done in `docs/deploy-staging.md`).
-15. **No graceful shutdown hook on the API** beyond
-    `QueueService.onModuleDestroy`. Add `app.enableShutdownHooks()` to
-    `main.ts` before Phase 2's workers land — otherwise in-flight jobs
-    won't drain on SIGTERM.
-    🔴 Blocker for Phase 2 production.
+15. ~~**No graceful shutdown hook on the API.**~~ Closed 2026-04-21 in
+    [PR #7](https://github.com/dhayaa001/nf-community-ai-os/pull/7).
+    `main.ts` now calls `app.enableShutdownHooks()` before `app.listen`,
+    so SIGTERM / SIGINT fire Nest's `OnModuleDestroy` chain — including
+    `QueueService.onModuleDestroy` which closes the BullMQ worker,
+    queue, and ioredis connection in order.
+    🟢 Was blocker for Phase 2 production.
 16. **CORS origin is read from `process.env.API_CORS_ORIGIN` inside the
     gateway decorator**, which evaluates at import time. If the env is
     injected later (e.g. via a runtime secret loader) the gateway will
@@ -182,5 +160,7 @@ for zero-credential boots and demos.
 - For anything marked 🔴, gate merge on having a staging reproduction
   that shows the current behavior failing and the fix passing.
 
-Last updated: 2026-04-16 (Phase 2 kick-off). Item numbers are stable —
+Last updated: 2026-04-21 (A1 closed; Phase 2 blockers A3/A4/D15 closed
+in [PR #7](https://github.com/dhayaa001/nf-community-ai-os/pull/7);
+C10 partial progress via first vitest suite). Item numbers are stable —
 don't renumber when items close, strike them through instead.

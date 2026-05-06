@@ -53,22 +53,64 @@ export class StubProvider implements LlmProvider {
   }
 }
 
-function extractMoney(s: string): string | null {
-  const m = s.match(/\$[\d,]+(?:\.\d+)?|\b\d+k\b/i);
-  return m ? m[0] : null;
+/**
+ * Return the *last* match of `re` in `s`, or null. Use for fields where the
+ * user's most recent value should win (budget, deadline) — earlier turns
+ * often contain a rough number the user then revises. Plain `.match()`
+ * always picks the first hit, which regresses on the 2nd turn.
+ * Tech-debt A1.
+ */
+function lastMatch(s: string, re: RegExp): string | null {
+  const flags = re.flags.includes('g') ? re.flags : `${re.flags}g`;
+  const global = new RegExp(re.source, flags);
+  let last: RegExpExecArray | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = global.exec(s)) !== null) {
+    last = m;
+    // Guard against zero-width matches causing an infinite loop.
+    if (m.index === global.lastIndex) global.lastIndex += 1;
+  }
+  return last ? last[0] : null;
 }
 
-function extractEmail(s: string): string | null {
+export function extractMoney(s: string): string | null {
+  // Three alternatives tried in order:
+  //   1. Comma-formatted ($10,000) — requires AT LEAST one `,\d{3}` group
+  //      (the `+` quantifier). If we used `*` here, `$1000` would match as
+  //      `$100` because `\d{1,3}` is greedy-maximal-of-3 and zero comma
+  //      groups would satisfy the rest — then the regex engine would stop
+  //      without ever trying alternative 2.
+  //   2. Plain digits ($1000, $5, $99.99).
+  //   3. Shorthand "Nk" (12k).
+  // The first alternative is anchored on digit triples so we don't swallow
+  // a trailing list comma (`"$10,000, deadline..."` → `$10,000`, not `$10,000,`).
+  return lastMatch(s, /\$\d{1,3}(?:,\d{3})+(?:\.\d+)?|\$\d+(?:\.\d+)?|\b\d+k\b/i);
+}
+
+export function extractEmail(s: string): string | null {
   const m = s.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
   return m ? m[0] : null;
 }
 
-function extractDeadline(s: string): string | null {
-  const m = s.match(/\b(?:in\s+)?(\d+\s*(?:day|week|month)s?|(?:q[1-4]|next\s+quarter|asap))\b/i);
-  return m ? m[0] : null;
+export function extractDeadline(s: string): string | null {
+  return lastMatch(
+    s,
+    /\b(?:in\s+)?(?:\d+\s*(?:day|week|month)s?|q[1-4]|next\s+quarter|asap)\b/i,
+  );
 }
 
-function extractKeyword(s: string, words: string[]): string | null {
+export function extractKeyword(s: string, words: string[]): string | null {
   const lower = s.toLowerCase();
-  return words.find((w) => lower.includes(w)) ?? null;
+  // Scan words in order, but within the text prefer the *last* occurrence
+  // so a later turn can change the service (e.g. "website" → "mobile app").
+  let bestWord: string | null = null;
+  let bestIdx = -1;
+  for (const w of words) {
+    const idx = lower.lastIndexOf(w);
+    if (idx > bestIdx) {
+      bestIdx = idx;
+      bestWord = w;
+    }
+  }
+  return bestWord;
 }

@@ -19,16 +19,18 @@ export class LeadAgent implements Agent {
   constructor(private readonly llm: LlmService) {}
 
   async run(ctx: AgentContext): Promise<AgentResult> {
-    const transcript = ctx.history
-      .slice(-10)
-      .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
-      .join('\n');
+    // Extract structured fields from ONLY the latest user turn. Feeding the
+    // full transcript meant the stub regex locked onto the oldest budget /
+    // deadline in history and never updated on follow-up turns. A real LLM
+    // would also conflate values across turns — extraction should reflect
+    // the intent of the current message, not a merged view of history.
+    // Tech-debt A1.
     const raw = await this.llm.complete({
       messages: [
         { role: 'system', content: `lead extractor\n${SYSTEM_PROMPT}` },
         {
           role: 'user',
-          content: `Conversation so far:\n${transcript}\nLatest user message:\n${ctx.latestUserMessage}\n\nReturn JSON only.`,
+          content: `Latest user message:\n${ctx.latestUserMessage}\n\nReturn JSON only.`,
         },
       ],
       temperature: 0,
