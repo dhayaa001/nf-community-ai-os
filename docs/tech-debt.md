@@ -10,7 +10,9 @@ ranked within each group.
 > dev mode. A few items (A3, A4, D15) would block a real production
 > rollout; those are flagged inline with 🔴. **Update 2026-04-21**: A1
 > (stub lead extractor) and the three Phase 2 production blockers (A3,
-> A4, D15) are now closed — see strike-throughs below.
+> A4, D15) are now closed — see strike-throughs below. **Update
+> 2026-05-06**: Phase 3 multi-agent pipeline (registry + orchestrator
+> refactor + tests) shipped; new follow-up items D22 and B23 added below.
 
 ---
 
@@ -97,15 +99,25 @@ regex locked onto turn 1.
    `payload as { message: Message }`. A `onTypedWsEvent<T>(WS_EVENT.X,
    handler)` helper parameterized on `WS_EVENT` keys would remove those
    casts on the web side.
+23. **Pipeline `handoff` payloads are `Record<string, unknown>`.** Phase 3
+    added `AgentResult.handoff` so steps can pass structured data to the
+    next agent (e.g. `lead → sales` carries the persisted `Lead`). It's
+    untyped today; well-known keys are documented in `agent.base.ts` and
+    the orchestrator's lead-step special-case still lives in
+    `orchestrator.service.ts`. Tighten with a discriminated union
+    (`LeadHandoff | BugfixHandoff | …`) and move the lead persistence
+    side-effect into `LeadAgent` once that lands. Pairs with item 7.
 
 ## C. Testing / tooling
 
-10. **Zero unit tests** — *partial progress 2026-04-21*. `apps/api` now
-    uses vitest; `stub.provider.spec.ts` covers the extractor helpers
-    and the lead-extractor JSON path. Next candidates:
-    `LeadAgent.safeParse`, `IntentClassifier.heuristic`,
-    `MemoryRepository`, and the `OrchestratorService` idempotency guard
-    from A3.
+10. **Zero unit tests** — *partial progress 2026-04-21 / 2026-05-06*.
+    `apps/api` now uses vitest. `stub.provider.spec.ts` covers the
+    extractor helpers and the lead-extractor JSON path.
+    `orchestrator.service.spec.ts` covers the Phase 3 pipeline loop
+    (lead→sales chain, community fallback, halt, handoff merge) and
+    the pipeline registry. Next candidates: `LeadAgent.safeParse`,
+    `IntentClassifier.heuristic`, `MemoryRepository`, and the
+    `OrchestratorService` idempotency guard from A3.
 11. **No CI workflow.** Repo has no `.github/workflows/` so `git_pr_checks`
     has nothing to wait on. Add one that runs `pnpm -r build`, `pnpm lint`,
     `pnpm typecheck`.
@@ -138,6 +150,15 @@ regex locked onto turn 1.
     The controller has no auth. Gate behind `stripeSecret` present OR
     require an auth header before Phase 5 goes live.
     🔴 Blocker for Phase 5.
+22. **Pipeline runs inside one queue job, not one job per step.** Phase 3
+    chose this for atomicity — one Task row, the existing A3 idempotency
+    guard keeps working unchanged, and the only fan-out today is
+    `lead → sales` (~2 steps). At Phase 4 traffic levels (and especially
+    when the bugfix / builder / qa pipeline grows), a single worker slot
+    blocked on a long pipeline becomes a problem. Refactor candidates:
+    enqueue a follow-up `OrchestratorJob` per step, correlate via
+    `task.id`, and surface step-state in the DB. The seam already exists
+    at the `for...of pipeline` loop in `OrchestratorService.dispatch`.
 
 ## E. Docs / DX
 
@@ -160,7 +181,10 @@ regex locked onto turn 1.
 - For anything marked 🔴, gate merge on having a staging reproduction
   that shows the current behavior failing and the fix passing.
 
-Last updated: 2026-04-21 (A1 closed; Phase 2 blockers A3/A4/D15 closed
-in [PR #7](https://github.com/dhayaa001/nf-community-ai-os/pull/7);
-C10 partial progress via first vitest suite). Item numbers are stable —
-don't renumber when items close, strike them through instead.
+Last updated: 2026-05-06 (Phase 3 pipeline registry + orchestrator
+refactor + tests shipped; new follow-ups B23 typed handoff and D22
+step-level queue fan-out added; C10 expanded with orchestrator coverage.
+Earlier: 2026-04-21 — A1 closed; Phase 2 blockers A3/A4/D15 closed in
+[PR #7](https://github.com/dhayaa001/nf-community-ai-os/pull/7); C10
+first vitest suite). Item numbers are stable — don't renumber when items
+close, strike them through instead.
